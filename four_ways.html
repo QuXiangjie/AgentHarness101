@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Four ways to write the agent loop</title>
+<style>
+  :root {
+    --bg: #fbfcfd; --panel: #ffffff; --border: #e3e8ee; --border2: #eef1f5;
+    --text: #1f2933; --muted: #6b7785; --accent: #2563eb;
+    --kw: #b5478c; --str: #1a8a5a; --com: #94a3b8; --fn: #7c3aed;
+    --good: #15a35a; --warn: #c2820a; --code-bg: #f4f6f9;
+    --shadow: 0 1px 3px rgba(16,24,40,.06), 0 1px 2px rgba(16,24,40,.04);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", Roboto, sans-serif;
+    line-height: 1.65; padding: 2.5rem 2rem;
+  }
+  .wrap { max-width: 1180px; margin: 0 auto; }
+  h1 { font-size: 2rem; margin-bottom: .25rem; letter-spacing: -.02em; }
+  .sub { color: var(--muted); margin-top: 0; margin-bottom: 2rem; }
+  h2 { font-size: 1.35rem; border-bottom: 2px solid var(--border); padding-bottom: .5rem; margin-top: 3rem; letter-spacing: -.01em; }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .tag { display: inline-block; font-size: .7rem; font-weight: 600; padding: .15rem .55rem;
+         border-radius: 999px; vertical-align: middle; margin-left: .5rem; }
+  .tag.you { background: #e8f0fe; color: #2563eb; border: 1px solid #c7dbfb; }
+  .tag.fw  { background: #e6f6ee; color: #15a35a; border: 1px solid #c0e8d2; }
+
+  /* Comparison table */
+  table { width: 100%; border-collapse: separate; border-spacing: 0; margin: 1.5rem 0; font-size: .92rem;
+          background: var(--panel); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; box-shadow: var(--shadow); }
+  th, td { text-align: left; padding: .75rem .95rem; border-bottom: 1px solid var(--border2); vertical-align: top; }
+  tr:last-child td { border-bottom: none; }
+  th { background: #f7f9fb; color: var(--accent); font-weight: 600; }
+  tr:nth-child(even) td { background: #fafbfc; }
+  td code, th code { background: var(--code-bg); padding: .1rem .35rem; border-radius: 5px; font-size: .85em; color: #334155; }
+
+  /* The "spectrum" bar */
+  .spectrum { display: flex; gap: .75rem; margin: 1.5rem 0 2rem; }
+  .spectrum .step { flex: 1; padding: 1rem; border: 1px solid var(--border); border-radius: 12px; background: var(--panel); box-shadow: var(--shadow); }
+  .spectrum .step h4 { margin: 0 0 .35rem; font-size: .95rem; }
+  .spectrum .step p { margin: 0; font-size: .8rem; color: var(--muted); }
+  .bar { height: 8px; border-radius: 4px; margin-bottom: .8rem;
+         background: linear-gradient(90deg, #f0a3b6, #f3cf8a, #9ad9b4, #a9c8f7); }
+  .barlabel { display: flex; justify-content: space-between; font-size: .8rem; color: var(--muted); margin-bottom: .35rem; }
+
+  /* Code cards */
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; margin: 1rem 0 2rem; overflow: hidden; box-shadow: var(--shadow); }
+  .card .hd { padding: .75rem 1.1rem; border-bottom: 1px solid var(--border); display:flex; justify-content:space-between; align-items:center; background: #f7f9fb; }
+  .card .hd .file { font-family: ui-monospace, monospace; font-size: .85rem; color: var(--accent); font-weight: 600; }
+  .card .hd .deps { font-size: .75rem; color: var(--muted); }
+  pre { margin: 0; padding: 1rem 1.2rem; overflow-x: auto; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .82rem; line-height: 1.55; color: #334155; background: var(--panel); }
+  pre .c { color: var(--com); font-style: italic; }
+  pre .k { color: var(--kw); }
+  pre .s { color: var(--str); }
+  pre .f { color: var(--fn); }
+  .hl { background: #fdf6e3; display: block; margin: 0 -1.2rem; padding: 0 1.2rem; border-left: 3px solid var(--warn); }
+
+  .note { background: #f0f6ff; border: 1px solid #d2e3fb; border-radius: 12px; padding: 1rem 1.2rem; margin: 1.5rem 0; font-size: .9rem; }
+  .note b { color: var(--accent); }
+  .key { color: var(--warn); font-weight: 600; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>Four ways to write the agent loop</h1>
+  <p class="sub">同一个玩具 agent — 一个工具 <code>get_weather</code>，提问 <em>"What's the weather in XAA?"</em> — 用四种方式写。
+  它们做的事完全一样：<b>调用模型 → 如果它要用工具，就执行并把结果喂回去 → 重复直到它停止。</b>
+  变的只是 <span class="key">这个循环有多少由你写、有多少被框架藏起来。</span></p>
+
+  <div class="barlabel"><span>← 你写全部</span><span>框架写全部 →</span></div>
+  <div class="bar"></div>
+  <div class="spectrum">
+    <div class="step"><h4>1 · Raw HTTP</h4><p>自己 POST JSON、解析字典。循环完全暴露。</p></div>
+    <div class="step"><h4>2 · Claude SDK</h4><p>同样的循环，但是有类型对象。SDK 只是传输层。</p></div>
+    <div class="step"><h4>3 · LangChain</h4><p>循环消失，进了 <code>create_agent</code>。</p></div>
+    <div class="step"><h4>4 · LangGraph</h4><p>循环又出现了，变成一张状态图。</p></div>
+  </div>
+
+  <h2>四种方式的差异一览</h2>
+  <table>
+    <thead>
+      <tr><th>维度</th><th>1 · Raw HTTP</th><th>2 · Claude SDK</th><th>3 · LangChain</th><th>4 · LangGraph</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><b>谁写循环</b></td>
+        <td>你 — 显式 <code>while True</code></td>
+        <td>你 — 显式 <code>while True</code></td>
+        <td><span style="color:var(--good)">框架</span> — 隐藏</td>
+        <td>你，但写成<b>图</b>（节点 + 边）</td>
+      </tr>
+      <tr>
+        <td><b>"我做完了吗" 判断</b></td>
+        <td><code>resp["stop_reason"] != "tool_use"</code></td>
+        <td><code>response.stop_reason != "tool_use"</code></td>
+        <td>藏在 <code>.invoke()</code> 里</td>
+        <td><code>tools_condition</code>（一条路由边）</td>
+      </tr>
+      <tr>
+        <td><b>工具调度</b></td>
+        <td>你 — <code>run_tool()</code> + 手动拼 <code>tool_result</code></td>
+        <td>你 — <code>run_tool()</code> + 手动拼 <code>tool_result</code></td>
+        <td>自动 — 从 <code>@tool</code> 签名推断</td>
+        <td>自动 — <code>ToolNode</code></td>
+      </tr>
+      <tr>
+        <td><b>返回结构</b></td>
+        <td>原始 <code>dict</code>（<code>resp["content"]</code>）</td>
+        <td>类型对象（<code>response.content</code>、<code>block.type</code>）</td>
+        <td><code>result["messages"]</code> 里的消息对象</td>
+        <td><code>result["messages"]</code> 里的消息对象</td>
+      </tr>
+      <tr>
+        <td><b>工具定义</b></td>
+        <td>手写 JSON schema</td>
+        <td>手写 JSON schema</td>
+        <td><code>@tool</code> + 类型注解 + docstring</td>
+        <td><code>@tool</code> + <code>.bind_tools()</code></td>
+      </tr>
+      <tr>
+        <td><b>鉴权 / 重试 / 类型</b></td>
+        <td>你</td>
+        <td>SDK 负责</td>
+        <td>框架负责</td>
+        <td>框架负责</td>
+      </tr>
+      <tr>
+        <td><b>依赖</b></td>
+        <td><code>requests</code></td>
+        <td><code>anthropic</code></td>
+        <td><code>langchain</code> + <code>langchain-anthropic</code></td>
+        <td><code>langgraph</code> + <code>langchain-anthropic</code></td>
+      </tr>
+      <tr>
+        <td><b>harness 代码量</b></td>
+        <td>~30 行（最多）</td>
+        <td>~30 行</td>
+        <td><span style="color:var(--good)">~8 行（最少）</span></td>
+        <td>~15 行（声明式）</td>
+      </tr>
+      <tr>
+        <td><b>适合场景</b></td>
+        <td>理解 harness <em>到底是什么</em></td>
+        <td>生产级 agent，要完全掌控循环</td>
+        <td>快速交付一个标准 agent</td>
+        <td>分支 / 多 agent / human-in-loop</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="note">
+    <b>核心就一句话：</b>四种方式里<b>模型完全相同</b> — 变的只有 <span class="key">harness</span>。
+    #1 和 #2 的循环是一段你能从头读到尾的 <code>while</code>；#3 里它消失了；#4 里它又以图的形式回来。
+    亲手把 #1 写一遍，另外三个就不再是魔法 —— 你会认出同一个循环藏在每一个里面。
+  </div>
+
+  <h2>核心循环并排对比 <span class="tag you">高亮 = 循环逻辑</span></h2>
+
+  <!-- 1 -->
+  <div class="card">
+    <div class="hd"><span class="file">1 · rawharness_text.py — Raw HTTP <span class="tag you">你掌控循环</span></span><span class="deps">deps: requests</span></div>
+<pre><span class="c"># 自己 POST JSON 并解析字典</span>
+messages = [{<span class="s">"role"</span>: <span class="s">"user"</span>, <span class="s">"content"</span>: <span class="s">"What's the weather in XAA?"</span>}]
+<span class="hl"><span class="k">while</span> <span class="k">True</span>:                                       <span class="c"># &lt;-- harness 循环</span></span>
+<span class="hl">    resp = requests.post(API_URL, headers=HEADERS, json={...}).json()</span>
+<span class="hl">    messages.append({<span class="s">"role"</span>: <span class="s">"assistant"</span>, <span class="s">"content"</span>: resp[<span class="s">"content"</span>]})</span>
+<span class="hl">    <span class="k">if</span> resp[<span class="s">"stop_reason"</span>] != <span class="s">"tool_use"</span>:        <span class="c"># 模型完成了</span></span>
+<span class="hl">        <span class="k">break</span></span>
+<span class="hl">    tool_results = []                              <span class="c"># 执行每个被请求的工具</span></span>
+<span class="hl">    <span class="k">for</span> block <span class="k">in</span> resp[<span class="s">"content"</span>]:</span>
+<span class="hl">        <span class="k">if</span> block[<span class="s">"type"</span>] == <span class="s">"tool_use"</span>:</span>
+<span class="hl">            tool_results.append({<span class="s">"type"</span>:<span class="s">"tool_result"</span>, <span class="s">"tool_use_id"</span>:block[<span class="s">"id"</span>],</span>
+<span class="hl">                                 <span class="s">"content"</span>: run_tool(block[<span class="s">"name"</span>], block[<span class="s">"input"</span>])})</span>
+<span class="hl">    messages.append({<span class="s">"role"</span>: <span class="s">"user"</span>, <span class="s">"content"</span>: tool_results})</span></pre>
+  </div>
+
+  <!-- 2 -->
+  <div class="card">
+    <div class="hd"><span class="file">2 · rawharness_sdk.py — Claude SDK <span class="tag you">你掌控循环</span></span><span class="deps">deps: anthropic</span></div>
+<pre><span class="c"># 完全相同的循环 —— 只是用类型对象代替字典</span>
+client = anthropic.Anthropic()
+<span class="hl"><span class="k">while</span> <span class="k">True</span>:                                       <span class="c"># &lt;-- 仍然是你的循环</span></span>
+<span class="hl">    response = client.messages.create(model=..., tools=TOOLS, messages=messages)</span>
+<span class="hl">    messages.append({<span class="s">"role"</span>:<span class="s">"assistant"</span>, <span class="s">"content"</span>: response.content})</span>
+<span class="hl">    <span class="k">if</span> response.stop_reason != <span class="s">"tool_use"</span>:        <span class="c"># 类型属性，不是字典 key</span></span>
+<span class="hl">        <span class="k">break</span></span>
+<span class="hl">    <span class="k">for</span> block <span class="k">in</span> response.content:               <span class="c"># block.type / block.id / block.input</span></span>
+<span class="hl">        <span class="k">if</span> block.type == <span class="s">"tool_use"</span>:</span>
+<span class="hl">            run_tool(block.name, block.input)      <span class="c"># ...同样地 append tool_result</span></span></pre>
+  </div>
+
+  <!-- 3 -->
+  <div class="card">
+    <div class="hd"><span class="file">3 · rawharness_langchain.py — LangChain <span class="tag fw">框架掌控循环</span></span><span class="deps">deps: langchain, langchain-anthropic</span></div>
+<pre><span class="k">from</span> langchain.agents <span class="k">import</span> create_agent
+
+<span class="f">@tool</span>
+<span class="k">def</span> <span class="f">get_weather</span>(city: str) -&gt; str:
+    <span class="s">"""Get the current weather for a city."""</span>
+    <span class="k">return</span> _get_weather(city)
+
+agent = create_agent(model=<span class="s">"anthropic:claude-opus-4-7"</span>, tools=[get_weather])
+<span class="hl">result = agent.invoke({<span class="s">"messages"</span>: [{<span class="s">"role"</span>:<span class="s">"user"</span>,<span class="s">"content"</span>:<span class="s">"What's the weather in XAA?"</span>}]})</span>
+print(result[<span class="s">"messages"</span>][-1].content)
+<span class="c"># 没有 while、没有 stop_reason、没有工具调度 —— .invoke() 跑完整个循环</span></pre>
+  </div>
+
+  <!-- 4 -->
+  <div class="card">
+    <div class="hd"><span class="file">4 · rawharness_langgraph.py — LangGraph <span class="tag fw">循环 = 你声明的一张图</span></span><span class="deps">deps: langgraph, langchain-anthropic</span></div>
+<pre>llm = ChatAnthropic(model=<span class="s">"claude-opus-4-7"</span>).bind_tools(tools)
+<span class="k">def</span> <span class="f">call_model</span>(state): <span class="k">return</span> {<span class="s">"messages"</span>: [llm.invoke(state[<span class="s">"messages"</span>])]}
+
+graph = StateGraph(MessagesState)
+graph.add_node(<span class="s">"model"</span>, call_model)
+graph.add_node(<span class="s">"tools"</span>, ToolNode(tools))
+graph.add_edge(START, <span class="s">"model"</span>)
+<span class="hl">graph.add_conditional_edges(<span class="s">"model"</span>, tools_condition)  <span class="c"># = "if stop_reason != tool_use" 的判断</span></span>
+<span class="hl">graph.add_edge(<span class="s">"tools"</span>, <span class="s">"model"</span>)                       <span class="c"># &lt;-- 回环的那条边</span></span>
+app = graph.compile()
+result = app.invoke({<span class="s">"messages"</span>: [{<span class="s">"role"</span>:<span class="s">"user"</span>,<span class="s">"content"</span>:<span class="s">"What's the weather in XAA?"</span>}]})</pre>
+  </div>
+
+  <div class="note">
+    <b>四种方式共享的部分：</b>工具本身只在 <code>tools/weather.py</code> 里写一次
+    （<code>get_weather()</code> + JSON schema），被每个 harness 导入 —— 所以变的只是<em>循环风格</em>，工具从不重复。
+  </div>
+
+</div>
+</body>
+</html>
