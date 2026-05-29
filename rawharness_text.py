@@ -2,6 +2,8 @@ import os, requests
 from dotenv import load_dotenv
 import json
 
+from tools.weather import get_weather, GET_WEATHER_TOOL   # shared tool: logic + schema
+
 
 load_dotenv()   # reads .env so ANTHROPIC_API_KEY is set without exporting it first
 
@@ -13,34 +15,7 @@ HEADERS = {
     "content-type": "application/json",
 }
 
-GET_WEATHER_TOOL = {
-    "name": "get_weather",
-    "description": "Get the current weather for a city.",
-    "input_schema": {
-        "type": "object",
-        "properties": {"city": {"type": "string"}},
-        "required": ["city"],
-    },
-}
-
 TOOLS = [GET_WEATHER_TOOL]
-
-def get_weather(city):
-    # City name -> coordinates (Open-Meteo geocoding, no API key needed).
-    results = requests.get(
-        "https://geocoding-api.open-meteo.com/v1/search",
-        params={"name": city, "count": 1},
-    ).json().get("results", [])
-    if not results:
-        return f"Couldn't find a city called {city!r}."
-    place = results[0]
-
-    # Coordinates -> current temperature (Open-Meteo forecast).
-    weather = requests.get(
-        "https://api.open-meteo.com/v1/forecast",
-        params={"latitude": place["latitude"], "longitude": place["longitude"], "current": "temperature_2m"},
-    ).json()
-    return f"It's {weather['current']['temperature_2m']}°C in {place['name']}."
 
 def run_tool(name, args):
     if name == "get_weather":
